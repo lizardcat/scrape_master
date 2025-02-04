@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>ScrapeMaster - Results</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        function filterResults() {
+            let selectedFilter = document.getElementById("filter").value;
+            let rows = document.querySelectorAll("tbody tr");
+
+            rows.forEach(row => {
+                let dataType = row.dataset.type;
+                row.style.display = (selectedFilter === "All" || dataType === selectedFilter) ? "" : "none";
+            });
+        }
+
+        function confirmClearData() {
+            if (confirm("Are you sure you want to delete all scraped data?")) {
+                window.location.href = "{{ url_for('clear_data') }}";
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>Scraped Data</h1>
+        <a href="{{ url_for('index') }}" class="back-btn">Back to Scraping</a>
+
+        <div class="filter-container">
+            <label for="filter">Filter Results:</label>
+            <select id="filter" onchange="filterResults()">
+                <option value="All">All</option>
+                <option value="Text">Text</option>
+                <option value="Links">Links</option>
+                <option value="Images">Images</option>
+                <option value="Videos">Videos</option>
+            </select>
+        </div>
+
+        <button onclick="confirmClearData()" class="clear-btn">Clear All Data</button>
+
+        {% if results %}
+        <table>
+            <thead>
+                <tr>
+                    <th>URL</th>
+                    <th>Data Type</th>
+                    <th>Extracted Data</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in results %}
+                <tr data-type="{{ row[1] }}">
+                    <td>{{ row[0] }}</td>
+                    <td>{{ row[1] }}</td>
+                    <td>
+                        {% if ".jpg" in row[2] or ".png" in row[2] %}
+                            <img src="{{ row[2] }}" alt="Scraped Image" class="scraped-img">
+                        {% elif ".mp4" in row[2] or "youtube.com" in row[2] %}
+                            <video class="scraped-video" controls>
+                                <source src="{{ row[2] }}" type="video/mp4">
+                                Your browser does not support the video tag.
+                            </video>
+                        {% else %}
+                            {% if keyword and keyword.lower() in row[2].lower() %}
+                                {{ row[2] | replace(keyword, '<span class="highlight">'+keyword+'</span>') | safe }}
+                            {% else %}
+                                {{ row[2] }}
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <a href="{{ url_for('download_csv') }}" class="download-btn">Download CSV</a>
+        {% else %}
+        <p>No data available.</p>
+        {% endif %}
+    </div>
+</body>
+</html>
