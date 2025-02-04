@@ -4,14 +4,9 @@
     <title>ScrapeMaster</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script>
-        function filterResults() {
-            let selectedFilter = document.getElementById("filter").value;
-            let rows = document.querySelectorAll("tbody tr");
-
-            rows.forEach(row => {
-                let dataType = row.dataset.type;
-                row.style.display = (selectedFilter === "All" || dataType === selectedFilter) ? "" : "none";
-            });
+        function showLoading() {
+            document.getElementById("loading").style.display = "block";
+            document.getElementById("scrape-button").disabled = true;
         }
     </script>
 </head>
@@ -20,50 +15,41 @@
         <h1>ScrapeMaster</h1>
         <p class="subtitle">Extract data from the web efficiently.</p>
 
-        <form method="post">
-            <div class="input-group">
-                <label>Enter Website URL:</label>
-                <input type="text" name="url" placeholder="https://example.com" required>
-            </div>
+        {% if error_message %}
+            <div class="error-box">{{ error_message }}</div>
+        {% endif %}
 
-            <div class="input-group">
-                <label>Select Data Type:</label>
-                <select name="data_type">
-                    <option value="Text">Text</option>
-                    <option value="Links">Links</option>
-                    <option value="Images">Images</option>
-                    <option value="Videos">Videos</option>
-                </select>
-            </div>
+        <form method="post" onsubmit="showLoading()">
+            <label>Enter Website URL:</label>
+            <input type="text" name="url" placeholder="https://example.com" required>
 
-            <div class="input-group">
-                <label>Keyword (Optional):</label>
-                <input type="text" name="keyword" placeholder="Highlight results with this keyword">
-            </div>
+            <label>Select Data Type:</label>
+            <select name="data_type">
+                <option value="Text">Text</option>
+                <option value="Links">Links</option>
+                <option value="Images">Images</option>
+                <option value="Videos">Videos</option>
+            </select>
+
+            <label>Keyword (Optional):</label>
+            <input type="text" name="keyword" placeholder="Highlight results with this keyword">
 
             <div class="checkbox-group">
                 <label><input type="checkbox" name="download_images"> Download Images</label>
                 <label><input type="checkbox" name="download_videos"> Download Videos</label>
             </div>
 
-            <button type="submit">Start Scraping</button>
+            <button type="submit" id="scrape-button">Start Scraping</button>
         </form>
+
+        <!-- Loading Spinner -->
+        <div id="loading" class="loading-spinner" style="display: none;">
+            Scraping in progress... Please wait.
+        </div>
 
         {% if data %}
         <div class="results-container">
             <h2>Scraped Results</h2>
-
-            <div class="filter-container">
-                <label for="filter">Filter Results:</label>
-                <select id="filter" onchange="filterResults()">
-                    <option value="All">All</option>
-                    <option value="Text">Text</option>
-                    <option value="Links">Links</option>
-                    <option value="Images">Images</option>
-                    <option value="Videos">Videos</option>
-                </select>
-            </div>
-
             <table>
                 <thead>
                     <tr>
@@ -73,30 +59,28 @@
                 </thead>
                 <tbody>
                     {% for row in data %}
-                    <tr data-type="{{ row['type'] }}">
+                    <tr>
                         <td>{{ row['type'] }}</td>
                         <td>
-                            {% if ".jpg" in row['content'] or ".png" in row['content'] %}
-                                <img src="{{ row['content'] }}" alt="Scraped Image" class="scraped-img">
-                            {% elif ".mp4" in row['content'] or "youtube.com" in row['content'] %}
-                                <video class="scraped-video" controls>
-                                    <source src="{{ row['content'] }}" type="video/mp4">
-                                    Your browser does not support the video tag.
-                                </video>
-                            {% else %}
-                                {% if keyword and keyword.lower() in row['content'].lower() %}
-                                    {{ row['content'] | replace(keyword, '<span class="highlight">'+keyword+'</span>') | safe }}
+                            {% if row['type'] == 'Images' %}
+                                <img src="{{ row['content'] }}" alt="Scraped Image" class="scraped-img" width="150">
+                            {% elif row['type'] == 'Videos' %}
+                                {% if "youtube.com" in row['content'] or "youtu.be" in row['content'] %}
+                                    <iframe class="scraped-video" width="250" height="150" src="{{ row['content'] }}" allowfullscreen></iframe>
                                 {% else %}
-                                    {{ row['content'] }}
+                                    <video class="scraped-video" width="250" height="150" controls>
+                                        <source src="{{ row['content'] }}" type="video/mp4">
+                                        Your browser does not support the video tag.
+                                    </video>
                                 {% endif %}
+                            {% else %}
+                                {{ row['content'] }}
                             {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
-                </tbody>
+                </tbody>                
             </table>
-
-            <a href="{{ url_for('download_csv') }}" class="download-btn">Download CSV</a>
         </div>
         {% endif %}
     </div>
