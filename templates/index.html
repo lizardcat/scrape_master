@@ -20,6 +20,16 @@
         <h1>ScrapeMaster</h1>
         <p class="subtitle">Extract data from the web efficiently.</p>
 
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash-message flash-{{ category }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
         <form method="post">
             <div class="input-group">
                 <label>Enter Website URL:</label>
