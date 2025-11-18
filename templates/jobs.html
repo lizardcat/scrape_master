@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Scraping Jobs - ScrapeMaster</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .nav {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .nav a {
+            color: #bb86fc;
+            text-decoration: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            background: #2a2a2a;
+        }
+        .nav a:hover {
+            background: #3700b3;
+        }
+        .job-card {
+            background: #2a2a2a;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 10px;
+            border-left: 4px solid #bb86fc;
+        }
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .job-title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #bb86fc;
+        }
+        .job-status {
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-active {
+            background: #03dac6;
+            color: #000;
+        }
+        .status-inactive {
+            background: #cf6679;
+            color: #fff;
+        }
+        .job-info {
+            margin: 10px 0;
+            color: #ccc;
+            font-size: 14px;
+        }
+        .job-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .btn {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+        }
+        .btn-primary {
+            background: #bb86fc;
+            color: #fff;
+        }
+        .btn-secondary {
+            background: #03dac6;
+            color: #000;
+        }
+        .btn-danger {
+            background: #cf6679;
+            color: #fff;
+        }
+        .btn:hover {
+            opacity: 0.8;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <a href="{{ url_for('index') }}">Home</a>
+            <a href="{{ url_for('jobs_list') }}">Jobs</a>
+            <a href="{{ url_for('dashboard') }}">Dashboard</a>
+        </div>
+
+        <h1>Scraping Jobs</h1>
+        <p class="subtitle">Manage your multi-site scraping jobs with scheduling</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash-message flash-{{ category }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <a href="{{ url_for('create_job') }}" class="btn btn-primary">+ Create New Job</a>
+
+        {% if jobs %}
+            {% for job in jobs %}
+            <div class="job-card">
+                <div class="job-header">
+                    <div class="job-title">{{ job.name }}</div>
+                    <div class="job-status {% if job.is_active %}status-active{% else %}status-inactive{% endif %}">
+                        {% if job.is_active %}Active{% else %}Inactive{% endif %}
+                    </div>
+                </div>
+
+                <div class="job-info">
+                    <strong>URL:</strong> {{ job.url }}<br>
+                    <strong>Data Type:</strong> {{ job.data_type }}<br>
+                    {% if job.keyword %}
+                    <strong>Keyword:</strong> {{ job.keyword }}<br>
+                    {% endif %}
+                    {% if job.schedule_type %}
+                    <strong>Schedule:</strong> {{ job.schedule_type|title }}
+                    {% if job.schedule_value %}({{ job.schedule_value }}){% endif %}<br>
+                    {% endif %}
+                    {% if job.last_run %}
+                    <strong>Last Run:</strong> {{ job.last_run[:19] }}<br>
+                    {% endif %}
+                </div>
+
+                <div class="job-actions">
+                    <a href="{{ url_for('view_job', job_id=job.id) }}" class="btn btn-primary">View Details</a>
+                    <a href="{{ url_for('run_job', job_id=job.id) }}" class="btn btn-secondary">Run Now</a>
+                    <a href="{{ url_for('toggle_job', job_id=job.id) }}" class="btn btn-primary">
+                        {% if job.is_active %}Deactivate{% else %}Activate{% endif %}
+                    </a>
+                    <form method="POST" action="{{ url_for('delete_job', job_id=job.id) }}" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this job?');">
+                        <button type="submit" class="btn btn-danger">Delete</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <h2>No Jobs Yet</h2>
+                <p>Create your first scraping job to get started!</p>
+                <a href="{{ url_for('create_job') }}" class="btn btn-primary" style="margin-top: 20px;">Create Job</a>
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>

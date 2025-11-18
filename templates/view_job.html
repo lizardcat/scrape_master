@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>{{ job.name }} - ScrapeMaster</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .nav {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .nav a {
+            color: #bb86fc;
+            text-decoration: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            background: #2a2a2a;
+        }
+        .nav a:hover {
+            background: #3700b3;
+        }
+        .job-details {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        .detail-row {
+            display: flex;
+            padding: 10px 0;
+            border-bottom: 1px solid #444;
+        }
+        .detail-label {
+            font-weight: bold;
+            width: 200px;
+            color: #bb86fc;
+        }
+        .detail-value {
+            flex: 1;
+            color: #ccc;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .btn-primary {
+            background: #bb86fc;
+            color: #fff;
+        }
+        .btn-secondary {
+            background: #03dac6;
+            color: #000;
+        }
+        .status-badge {
+            padding: 5px 15px;
+            border-radius: 15px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .status-active {
+            background: #03dac6;
+            color: #000;
+        }
+        .status-inactive {
+            background: #cf6679;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <a href="{{ url_for('index') }}">Home</a>
+            <a href="{{ url_for('jobs_list') }}">Jobs</a>
+            <a href="{{ url_for('dashboard') }}">Dashboard</a>
+        </div>
+
+        <h1>{{ job.name }}</h1>
+        <span class="status-badge {% if job.is_active %}status-active{% else %}status-inactive{% endif %}">
+            {% if job.is_active %}Active{% else %}Inactive{% endif %}
+        </span>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash-message flash-{{ category }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="job-details">
+            <h2 style="margin-top: 0;">Job Details</h2>
+
+            <div class="detail-row">
+                <div class="detail-label">Job ID:</div>
+                <div class="detail-value">{{ job.id }}</div>
+            </div>
+
+            <div class="detail-row">
+                <div class="detail-label">URL:</div>
+                <div class="detail-value">{{ job.url }}</div>
+            </div>
+
+            <div class="detail-row">
+                <div class="detail-label">Data Type:</div>
+                <div class="detail-value">{{ job.data_type }}</div>
+            </div>
+
+            {% if job.keyword %}
+            <div class="detail-row">
+                <div class="detail-label">Keyword:</div>
+                <div class="detail-value">{{ job.keyword }}</div>
+            </div>
+            {% endif %}
+
+            <div class="detail-row">
+                <div class="detail-label">Download Images:</div>
+                <div class="detail-value">{% if job.download_images %}Yes{% else %}No{% endif %}</div>
+            </div>
+
+            <div class="detail-row">
+                <div class="detail-label">Download Videos:</div>
+                <div class="detail-value">{% if job.download_videos %}Yes{% else %}No{% endif %}</div>
+            </div>
+
+            <div class="detail-row">
+                <div class="detail-label">Schedule Type:</div>
+                <div class="detail-value">
+                    {% if job.schedule_type %}
+                        {{ job.schedule_type|title }}
+                        {% if job.schedule_value %}({{ job.schedule_value }}){% endif %}
+                    {% else %}
+                        Manual
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="detail-row">
+                <div class="detail-label">Created:</div>
+                <div class="detail-value">{{ job.created_at[:19] if job.created_at else 'N/A' }}</div>
+            </div>
+
+            <div class="detail-row">
+                <div class="detail-label">Last Run:</div>
+                <div class="detail-value">{{ job.last_run[:19] if job.last_run else 'Never' }}</div>
+            </div>
+
+            <div class="detail-row">
+                <div class="detail-label">Status:</div>
+                <div class="detail-value">
+                    {% if job.is_active %}Active{% else %}Inactive{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div style="margin: 20px 0;">
+            <a href="{{ url_for('run_job', job_id=job.id) }}" class="btn btn-secondary">▶ Run Now</a>
+            <a href="{{ url_for('toggle_job', job_id=job.id) }}" class="btn btn-primary">
+                {% if job.is_active %}⏸ Deactivate{% else %}▶ Activate{% endif %}
+            </a>
+            <a href="{{ url_for('jobs_list') }}" class="btn btn-primary">← Back to Jobs</a>
+        </div>
+    </div>
+</body>
+</html>

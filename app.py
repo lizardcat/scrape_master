@@ -4,15 +4,21 @@ import sqlite3
 import pandas as pd
 import logging
 import hashlib
-from datetime import datetime
+import json
+import time
+from datetime import datetime, timedelta
 from urllib.parse import urljoin, urlparse
-from flask import Flask, render_template, request, send_file, redirect, url_for, flash
+from flask import Flask, render_template, request, send_file, redirect, url_for, flash, jsonify
 from bs4 import BeautifulSoup
 from flask_apscheduler import APScheduler
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+
+# Import new modules
+import database as db
+from data_cleaning import create_default_pipeline, DataCleaningPipeline
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -261,120 +267,158 @@ def selenium_scrape(url):
                 logger.error(f"Error closing Selenium driver: {e}")
 
 # Function to scrape website
-def scrape_website(url, data_type, keyword=None, download_images=False, download_videos=False):
-    """Main scraping function with fallback to Selenium"""
+def scrape_website(url, data_type, keyword=None, download_images=False, download_videos=False,
+                  job_id=None, apply_cleaning=True):
+    """Main scraping function with fallback to Selenium and data cleaning"""
 
-    # Validate URL
-    if not validate_url(url):
-        logger.error(f"Invalid URL: {url}")
-        return [{"type": "error", "content": f"Invalid URL: {url}"}]
+    start_time = time.time()
+    success = True
+    error_message = None
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-
-    soup = None
     try:
-        logger.info(f"Attempting to scrape {url} for {data_type}")
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-    except requests.exceptions.RequestException as e:
-        # If blocked or error, switch to Selenium
-        logger.warning(f"Requests failed for {url}, trying Selenium: {e}")
+        # Validate URL
+        if not validate_url(url):
+            logger.error(f"Invalid URL: {url}")
+            return [{"type": "error", "content": f"Invalid URL: {url}"}]
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+
+        soup = None
         try:
-            soup = selenium_scrape(url)
-        except Exception as selenium_error:
-            logger.error(f"Selenium scraping also failed for {url}: {selenium_error}")
-            return [{"type": "error", "content": f"Failed to scrape website: {str(selenium_error)}"}]
+            logger.info(f"Attempting to scrape {url} for {data_type}")
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+        except requests.exceptions.RequestException as e:
+            # If blocked or error, switch to Selenium
+            logger.warning(f"Requests failed for {url}, trying Selenium: {e}")
+            try:
+                soup = selenium_scrape(url)
+            except Exception as selenium_error:
+                logger.error(f"Selenium scraping also failed for {url}: {selenium_error}")
+                success = False
+                error_message = str(selenium_error)
+                return [{"type": "error", "content": f"Failed to scrape website: {str(selenium_error)}"}]
 
-    if not soup:
-        return [{"type": "error", "content": "Failed to parse website"}]
+        if not soup:
+            success = False
+            error_message = "Failed to parse website"
+            return [{"type": "error", "content": "Failed to parse website"}]
 
-    extracted_data = []
+        extracted_data = []
 
-    # Select elements based on data type
-    if data_type == "Text":
-        elements = soup.find_all("p")
-    elif data_type == "Links":
-        elements = soup.find_all("a", href=True)
-    elif data_type == "Images":
-        elements = soup.find_all("img", src=True)
-    elif data_type == "Videos":
-        elements = soup.find_all(["video", "iframe"])
-    else:
-        return [{"type": "error", "content": "Invalid Data Type"}]
-
-    logger.info(f"Found {len(elements)} elements of type {data_type}")
-
-    # Extract data from elements
-    for element in elements:
-        data = None
-
+        # Select elements based on data type
         if data_type == "Text":
-            data = element.text.strip()
-            if not data:  # Skip empty text
-                continue
-
+            elements = soup.find_all("p")
         elif data_type == "Links":
-            href = element.get("href")
-            data = normalize_url(href, url)
-            if not data:
-                continue
-
+            elements = soup.find_all("a", href=True)
         elif data_type == "Images":
-            src = element.get("src")
-            if download_images:
-                local_path = download_image(src, url)
-                data = local_path if local_path else normalize_url(src, url)
-            else:
-                data = normalize_url(src, url)
-
+            elements = soup.find_all("img", src=True)
         elif data_type == "Videos":
-            if element.name == "video":
+            elements = soup.find_all(["video", "iframe"])
+        else:
+            success = False
+            error_message = "Invalid Data Type"
+            return [{"type": "error", "content": "Invalid Data Type"}]
+
+        logger.info(f"Found {len(elements)} elements of type {data_type}")
+
+        # Extract data from elements
+        for element in elements:
+            data = None
+
+            if data_type == "Text":
+                data = element.text.strip()
+                if not data:  # Skip empty text
+                    continue
+
+            elif data_type == "Links":
+                href = element.get("href")
+                data = normalize_url(href, url)
+                if not data:
+                    continue
+
+            elif data_type == "Images":
                 src = element.get("src")
-                if download_videos:
-                    local_path = download_video(src, url)
+                if download_images:
+                    local_path = download_image(src, url)
                     data = local_path if local_path else normalize_url(src, url)
                 else:
                     data = normalize_url(src, url)
-            elif element.name == "iframe":
-                data = element.get("src")  # Embedded YouTube videos
-                data = normalize_url(data, url) if data else None
 
-        # Apply keyword filter
-        if data:
-            if keyword and keyword.lower() in str(data).lower():
-                extracted_data.append(data)
-            elif not keyword:
-                extracted_data.append(data)
+            elif data_type == "Videos":
+                if element.name == "video":
+                    src = element.get("src")
+                    if download_videos:
+                        local_path = download_video(src, url)
+                        data = local_path if local_path else normalize_url(src, url)
+                    else:
+                        data = normalize_url(src, url)
+                elif element.name == "iframe":
+                    data = element.get("src")  # Embedded YouTube videos
+                    data = normalize_url(data, url) if data else None
 
-    logger.info(f"Extracted {len(extracted_data)} items after filtering")
+            # Apply keyword filter
+            if data:
+                if keyword and keyword.lower() in str(data).lower():
+                    extracted_data.append(data)
+                elif not keyword:
+                    extracted_data.append(data)
 
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_data = []
-    for item in extracted_data:
-        if item not in seen:
-            seen.add(item)
-            unique_data.append(item)
+        logger.info(f"Extracted {len(extracted_data)} items after filtering")
 
-    # Save results to CSV
-    try:
-        df = pd.DataFrame(unique_data, columns=["Extracted Data"])
-        csv_path = "data/scraped_data.csv"
-        df.to_csv(csv_path, index=False)
-        logger.info(f"Saved {len(unique_data)} items to CSV")
-    except Exception as e:
-        logger.error(f"Error saving CSV: {e}")
+        # Apply data cleaning pipeline
+        cleaned_data = extracted_data
+        if apply_cleaning and extracted_data:
+            try:
+                pipeline = create_default_pipeline(data_type)
+                cleaned_data = pipeline.clean(extracted_data, data_type)
+                logger.info(f"Cleaned data: {len(extracted_data)} -> {len(cleaned_data)} items")
+            except Exception as e:
+                logger.error(f"Error in cleaning pipeline: {e}")
+                cleaned_data = extracted_data
 
-    # Save results to database
-    try:
-        save_to_db(url, data_type, unique_data)
-    except Exception as e:
-        logger.error(f"Error saving to database: {e}")
+        # Save results to CSV
+        try:
+            df = pd.DataFrame(cleaned_data, columns=["Extracted Data"])
+            csv_path = "data/scraped_data.csv"
+            df.to_csv(csv_path, index=False)
+            logger.info(f"Saved {len(cleaned_data)} items to CSV")
+        except Exception as e:
+            logger.error(f"Error saving CSV: {e}")
 
-    return [{"type": data_type, "content": item} for item in unique_data]
+        # Save results to database
+        try:
+            db.save_scraping_results(
+                url=url,
+                data_type=data_type,
+                extracted_data=extracted_data,
+                cleaned_data=cleaned_data,
+                job_id=job_id
+            )
+        except Exception as e:
+            logger.error(f"Error saving to database: {e}")
+
+        return [{"type": data_type, "content": item} for item in cleaned_data]
+
+    finally:
+        # Save statistics
+        execution_time = time.time() - start_time
+        try:
+            db.save_scraping_stats(
+                url=url,
+                data_type=data_type,
+                items_scraped=len(extracted_data) if 'extracted_data' in locals() else 0,
+                items_cleaned=len(cleaned_data) if 'cleaned_data' in locals() else 0,
+                success=success,
+                error_message=error_message,
+                execution_time=execution_time,
+                job_id=job_id
+            )
+        except Exception as e:
+            logger.error(f"Error saving statistics: {e}")
 
 # Function to save scraped data to database
 def save_to_db(url, data_type, extracted_data):
@@ -473,22 +517,278 @@ def download_csv():
 @app.route("/clear_data")
 def clear_data():
     """Clear all scraped data from database"""
-    conn = None
     try:
-        conn = sqlite3.connect("scraper.db")
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM results")
-        conn.commit()
+        db.clear_all_data()
         logger.info("Cleared all data from database")
         flash("All scraped data has been cleared", "success")
     except Exception as e:
         logger.error(f"Error clearing data: {e}")
         flash(f"Error clearing data: {str(e)}", "error")
-    finally:
-        if conn:
-            conn.close()
 
     return redirect(url_for('index'))
+
+# =============================================================================
+# SCRAPING JOBS MANAGEMENT ROUTES
+# =============================================================================
+
+@app.route("/jobs")
+def jobs_list():
+    """Display all scraping jobs"""
+    jobs = db.get_scraping_jobs()
+    return render_template("jobs.html", jobs=jobs)
+
+@app.route("/jobs/create", methods=["GET", "POST"])
+def create_job():
+    """Create a new scraping job"""
+    if request.method == "POST":
+        try:
+            name = request.form.get("name", "").strip()
+            url = request.form.get("url", "").strip()
+            data_type = request.form.get("data_type", "Text")
+            keyword = request.form.get("keyword", "").strip()
+            download_images = "download_images" in request.form
+            download_videos = "download_videos" in request.form
+            schedule_type = request.form.get("schedule_type")
+            schedule_value = request.form.get("schedule_value")
+
+            if not name or not url:
+                flash("Name and URL are required", "error")
+                return render_template("create_job.html")
+
+            job_id = db.create_scraping_job(
+                name=name,
+                url=url,
+                data_type=data_type,
+                keyword=keyword if keyword else None,
+                download_images=download_images,
+                download_videos=download_videos,
+                schedule_type=schedule_type if schedule_type != "manual" else None,
+                schedule_value=schedule_value if schedule_value else None
+            )
+
+            if job_id:
+                # Schedule the job if it's not manual
+                if schedule_type and schedule_type != "manual":
+                    schedule_job_scraping(job_id)
+
+                flash(f"Job '{name}' created successfully!", "success")
+                return redirect(url_for('jobs_list'))
+            else:
+                flash("Failed to create job", "error")
+
+        except Exception as e:
+            logger.error(f"Error creating job: {e}")
+            flash(f"An error occurred: {str(e)}", "error")
+
+    return render_template("create_job.html")
+
+@app.route("/jobs/<int:job_id>")
+def view_job(job_id):
+    """View a specific job and its results"""
+    job = db.get_scraping_job(job_id)
+    if not job:
+        flash("Job not found", "error")
+        return redirect(url_for('jobs_list'))
+
+    return render_template("view_job.html", job=job)
+
+@app.route("/jobs/<int:job_id>/run")
+def run_job(job_id):
+    """Manually run a scraping job"""
+    job = db.get_scraping_job(job_id)
+    if not job:
+        flash("Job not found", "error")
+        return redirect(url_for('jobs_list'))
+
+    try:
+        # Run the scraping job
+        scraped_data = scrape_website(
+            url=job['url'],
+            data_type=job['data_type'],
+            keyword=job['keyword'],
+            download_images=bool(job['download_images']),
+            download_videos=bool(job['download_videos']),
+            job_id=job_id,
+            apply_cleaning=True
+        )
+
+        # Update last_run timestamp
+        db.update_scraping_job(job_id, last_run=datetime.now().isoformat())
+
+        if scraped_data and scraped_data[0].get("type") != "error":
+            flash(f"Job ran successfully! Scraped {len(scraped_data)} items.", "success")
+        else:
+            flash("Job ran but no data was found or an error occurred", "warning")
+
+    except Exception as e:
+        logger.error(f"Error running job {job_id}: {e}")
+        flash(f"Error running job: {str(e)}", "error")
+
+    return redirect(url_for('view_job', job_id=job_id))
+
+@app.route("/jobs/<int:job_id>/toggle")
+def toggle_job(job_id):
+    """Toggle job active status"""
+    job = db.get_scraping_job(job_id)
+    if not job:
+        flash("Job not found", "error")
+        return redirect(url_for('jobs_list'))
+
+    new_status = 0 if job['is_active'] else 1
+    db.update_scraping_job(job_id, is_active=new_status)
+
+    status_text = "activated" if new_status else "deactivated"
+    flash(f"Job {status_text} successfully", "success")
+
+    return redirect(url_for('jobs_list'))
+
+@app.route("/jobs/<int:job_id>/delete", methods=["POST"])
+def delete_job(job_id):
+    """Delete a scraping job"""
+    if db.delete_scraping_job(job_id):
+        flash("Job deleted successfully", "success")
+    else:
+        flash("Failed to delete job", "error")
+
+    return redirect(url_for('jobs_list'))
+
+# =============================================================================
+# API ENDPOINTS FOR DASHBOARD
+# =============================================================================
+
+@app.route("/api/stats")
+def api_stats():
+    """Get dashboard statistics"""
+    try:
+        stats = db.get_dashboard_stats()
+        return jsonify(stats)
+    except Exception as e:
+        logger.error(f"Error fetching stats: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/jobs")
+def api_jobs():
+    """Get all scraping jobs"""
+    try:
+        jobs = db.get_scraping_jobs()
+        return jsonify(jobs)
+    except Exception as e:
+        logger.error(f"Error fetching jobs: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/jobs/<int:job_id>")
+def api_job_detail(job_id):
+    """Get job details"""
+    try:
+        job = db.get_scraping_job(job_id)
+        if job:
+            return jsonify(job)
+        return jsonify({"error": "Job not found"}), 404
+    except Exception as e:
+        logger.error(f"Error fetching job {job_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/dashboard")
+def dashboard():
+    """Dashboard page with visualizations"""
+    return render_template("dashboard.html")
+
+# =============================================================================
+# SCHEDULER FUNCTIONS
+# =============================================================================
+
+def schedule_job_scraping(job_id):
+    """Schedule a scraping job based on its configuration"""
+    job = db.get_scraping_job(job_id)
+    if not job or not job['schedule_type']:
+        return
+
+    schedule_type = job['schedule_type']
+    schedule_value = job['schedule_value']
+
+    # Remove existing job schedule if any
+    try:
+        scheduler.remove_job(f"job_{job_id}")
+    except:
+        pass
+
+    # Schedule based on type
+    if schedule_type == "hourly":
+        hours = int(schedule_value) if schedule_value else 1
+        scheduler.add_job(
+            id=f"job_{job_id}",
+            func=run_scheduled_job,
+            args=[job_id],
+            trigger='interval',
+            hours=hours
+        )
+        logger.info(f"Scheduled job {job_id} to run every {hours} hour(s)")
+
+    elif schedule_type == "daily":
+        # Schedule at specific time (HH:MM format)
+        if schedule_value:
+            hour, minute = map(int, schedule_value.split(':'))
+            scheduler.add_job(
+                id=f"job_{job_id}",
+                func=run_scheduled_job,
+                args=[job_id],
+                trigger='cron',
+                hour=hour,
+                minute=minute
+            )
+            logger.info(f"Scheduled job {job_id} to run daily at {schedule_value}")
+
+    elif schedule_type == "weekly":
+        # Schedule weekly on a specific day
+        if schedule_value:
+            day_of_week = schedule_value  # e.g., "mon", "tue", etc.
+            scheduler.add_job(
+                id=f"job_{job_id}",
+                func=run_scheduled_job,
+                args=[job_id],
+                trigger='cron',
+                day_of_week=day_of_week,
+                hour=0,
+                minute=0
+            )
+            logger.info(f"Scheduled job {job_id} to run weekly on {day_of_week}")
+
+def run_scheduled_job(job_id):
+    """Run a scheduled scraping job"""
+    job = db.get_scraping_job(job_id)
+    if not job or not job['is_active']:
+        return
+
+    logger.info(f"Running scheduled job {job_id}: {job['name']}")
+
+    try:
+        scrape_website(
+            url=job['url'],
+            data_type=job['data_type'],
+            keyword=job['keyword'],
+            download_images=bool(job['download_images']),
+            download_videos=bool(job['download_videos']),
+            job_id=job_id,
+            apply_cleaning=True
+        )
+
+        # Update last_run and next_run
+        db.update_scraping_job(
+            job_id,
+            last_run=datetime.now().isoformat()
+        )
+
+    except Exception as e:
+        logger.error(f"Error in scheduled job {job_id}: {e}")
+
+# Load and schedule all active jobs on startup
+@app.before_first_request
+def schedule_active_jobs():
+    """Schedule all active jobs on application startup"""
+    jobs = db.get_scraping_jobs(active_only=True)
+    for job in jobs:
+        if job['schedule_type'] and job['schedule_type'] != 'manual':
+            schedule_job_scraping(job['id'])
 
 # Scheduled scraping task (runs every hour)
 # NOTE: Disabled by default. Uncomment and configure URL to enable
